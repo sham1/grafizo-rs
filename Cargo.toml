@@ -1,0 +1,11 @@
+[package]
+name = "grafizo"
+version = "0.1.0"
+authors = ["Jani Juhani Sinervo <jani@sinervo.fi>"]
+edition = "2018"
+
+[dependencies]
+colorbuf = { git = "https://github.com/sham1/colorbuf-rs.git" }
+
+[dev-dependencies]
+png = "0.13.1"
