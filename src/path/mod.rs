@@ -1,9 +1,14 @@
 use crate::Canvas;
+use std::collections::VecDeque;
 
 use crate::vector::{Point2, Vector2};
 
 pub trait Path {
     fn stroke(&self, c: &mut Canvas, width: f32);
+}
+
+pub trait Loop: Path {
+    fn fill(&self, c: &mut Canvas);
 }
 
 pub struct OpenMultiPath {
@@ -12,6 +17,32 @@ pub struct OpenMultiPath {
 
 pub struct ClosedMultiPath {
     parts: Vec<Box<Curve>>,
+}
+
+pub struct Circle {
+    center: Point2,
+    radius: f32,
+}
+
+impl Circle {
+    pub fn new(center: Point2, radius: f32) -> Circle {
+        Circle { center, radius, }
+    }
+}
+
+impl Path for Circle {
+    fn stroke(&self, c: &mut Canvas, width: f32) {
+        let inner_radius = (self.radius) - (width / 2f32);
+        let outer_radius = (self.radius) + (width / 2f32);
+
+        c.rasterize_stroked_circle(self.center, inner_radius, outer_radius);
+    }
+}
+
+impl Loop for Circle {
+    fn fill(&self, c: &mut Canvas) {
+        c.rasterize_stroked_circle(self.center, 0f32, self.radius);
+    }
 }
 
 /// This trait represents a curve defined based on a parametric function.
@@ -27,7 +58,7 @@ pub trait Curve: Path {
     ///
     /// Note: The actual length of the curve may not match this.
     fn approximate_length(&self) -> f32;
-    fn get_point(&self, t: f32) -> [f32; 2];
+    fn get_point(&self, t: f32) -> Point2;
     fn derivative(&self, t: f32) -> [f32; 2];
 }
 
@@ -66,11 +97,11 @@ impl Curve for Line {
             .sqrt()
     }
 
-    fn get_point(&self, t: f32) -> [f32; 2] {
+    fn get_point(&self, t: f32) -> Point2 {
         let x = (1f32 - t) * self.p0.get_x() + t * self.p1.get_x();
         let y = (1f32 - t) * self.p0.get_y() + t * self.p1.get_y();
 
-        [x, y]
+        Point2::new(x, y)
     }
 
     fn derivative(&self, _: f32) -> [f32; 2] {
@@ -90,9 +121,9 @@ pub struct QuadBezierCurve {
 impl QuadBezierCurve {
     pub fn new(begin: Point2, control: Point2, end: Point2) -> QuadBezierCurve {
         QuadBezierCurve {
-            p0: [ begin.get_x(), begin.get_y() ],
-            p1: [ control.get_x(), control.get_y() ],
-            p2: [ end.get_x(), end.get_y() ],
+            p0: [begin.get_x(), begin.get_y()],
+            p1: [control.get_x(), control.get_y()],
+            p2: [end.get_x(), end.get_y()],
         }
     }
 }
@@ -110,55 +141,29 @@ impl Path for QuadBezierCurve {
         // of segments needed while having the count be high for
         // low numbers. The particular hyperbola we'll be using is
         // `sqrt(x * x + 100), for x >= 0` (never actually going to be 0).
-        let line_segment_hyperbola = |length: f32| (((length * length) + 100f32).sqrt() + 1f32) as u64;
+        let line_segment_hyperbola =
+            |length: f32| (((length * length) + 100f32).sqrt() + 1f32) as u64;
         let approx_len = self.approximate_length();
         let line_segments = line_segment_hyperbola(approx_len);
 
-        let mut lines: Vec<[Point2; 4]> = Vec::with_capacity(line_segments as usize);
-        let prev_pos = 0f32;
-        
-        let prev_point = self.get_point(prev_pos);
-        let prev_x: f32 = prev_point[0];
-        let prev_y: f32 = prev_point[1];
-        let mut prev_p = Point2::new(prev_x, prev_y);
-        
-        let prev_deriv = self.derivative(prev_pos);
-        let prev_dx = prev_deriv[0];
-        let prev_dy = prev_deriv[1];
+        let mut left_edge: Vec<Point2> = Vec::new();
+        let mut right_edge: VecDeque<Point2> = VecDeque::new();
 
-        let mut prev_normal = Vector2::new(prev_dy, -prev_dx).unit();
-        prev_normal = prev_normal * half_width;
+        for i in 0..=line_segments {
+            let t = (i as f32) / (line_segments as f32);
+            let curr_point = self.get_point(t);
+            let [dx, dy] = self.derivative(t);
+            let norm = Vector2::new(dy, -dx).unit() * half_width;
 
-        for i in 0..line_segments {
-            let next_pos = ((i + 1) as f32) / (line_segments as f32);
-            let next_point = self.get_point(next_pos);
-            
-            let next_x = next_point[0];
-            let next_y = next_point[1];
-            let next_p = Point2::new(next_x, next_y);
-            
-            let next_deriv = self.derivative(next_pos);
-            
-            let next_dx = next_deriv[0];
-            let next_dy = next_deriv[1];
-            
-            let mut next_normal = Vector2::new(next_dy, -next_dx).unit();
-            next_normal = next_normal * half_width;
+            let left = curr_point - norm;
+            let right = curr_point + norm;
 
-            let v1 = prev_p - prev_normal;
-            let v2 = next_p - next_normal;
-            let v3 = next_p + next_normal;
-            let v4 = prev_p + prev_normal;
-
-            lines.insert(i as usize, [v1, v2, v3, v4]);
-
-            prev_p = next_p;
-            prev_normal = next_normal;
+            left_edge.push(left);
+            right_edge.push_front(right);
         }
 
-        for [v1, v2, v3, v4] in lines.into_iter() {
-            c.rasterize_filled_rectangle(v1, v2, v3, v4);
-        }
+        let point = left_edge.into_iter().chain(right_edge).collect::<Vec<_>>();
+        c.rasterize_convex_filled_polygon(&point[..]);
     }
 }
 
@@ -168,23 +173,23 @@ impl Curve for QuadBezierCurve {
             + (square(self.p2[0] - self.p1[0]) + square(self.p2[1] - self.p1[1])).sqrt()
     }
 
-    fn get_point(&self, t: f32) -> [f32; 2] {
+    fn get_point(&self, t: f32) -> Point2 {
         let x = square(1f32 - t) * self.p0[0]
             + 2f32 * t * (1f32 - t) * self.p1[0]
             + square(t) * self.p2[0];
         let y = square(1f32 - t) * self.p0[1]
             + 2f32 * t * (1f32 - t) * self.p1[1]
             + square(t) * self.p2[1];
-        [x, y]
+        Point2::new(x, y)
     }
 
     fn derivative(&self, t: f32) -> [f32; 2] {
-        let dx = -2f32 * self.p0[0] * (1f32 - t)
-            + 2f32 * self.p1[0] * (1f32 - 2f32 * t)
-            + 2f32 * self.p2[0] * t;
-        let dy = -2f32 * self.p0[0] * (1f32 - t)
-            + 2f32 * self.p1[0] * (1f32 - 2f32 * t)
-            + 2f32 * self.p2[0] * t;
+        let dx = (-2f32 + 2f32 * t) * self.p0[0]
+            + (2f32 - 4f32 * t) * self.p1[0]
+            + 2f32 * t * self.p2[0];
+        let dy = (-2f32 + 2f32 * t) * self.p0[1]
+            + (2f32 - 4f32 * t) * self.p1[1]
+            + 2f32 * t * self.p2[1];
         [dx, dy]
     }
 }

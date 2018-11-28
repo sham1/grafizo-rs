@@ -1,7 +1,7 @@
 extern crate colorbuf;
 extern crate grafizo;
 
-use grafizo::path::Path;
+use grafizo::path::{Path, Loop};
 
 extern crate png;
 
@@ -30,11 +30,23 @@ fn main() {
         b: 1.0f32,
         a: 1.0f32,
     };
+    let foreground3 = colorbuf::Color {
+        r: 1.0f32,
+        g: 1.0f32,
+        b: 1.0f32,
+        a: 1.0f32,
+    };
+    let foreground4 = colorbuf::Color {
+        r: 1.0f32,
+        g: 1.0f32,
+        b: 1.0f32,
+        a: 1.0f32,
+    };
     let mut canvas = grafizo::Canvas::new(800, 600, background);
     canvas.set_draw_color(foreground);
 
     let begin = grafizo::vector::Point2::new(100f32, 200f32);
-    let end = grafizo::vector::Point2::new(500f32, 200f32);
+    let end = grafizo::vector::Point2::new(500f32, 300f32);
 
     let line = grafizo::path::Line::new(begin, end);
     line.stroke(&mut canvas, 10f32);
@@ -42,11 +54,21 @@ fn main() {
     canvas.set_draw_color(foreground2);
 
     let begin = grafizo::vector::Point2::new(100f32, 400f32);
-    let control = grafizo::vector::Point2::new(150f32, 300f32);
-    let end = grafizo::vector::Point2::new(300f32, 400f32);
+    let control = grafizo::vector::Point2::new(125f32, 300f32);
+    let end = grafizo::vector::Point2::new(150f32, 400f32);
 
     let curve = grafizo::path::QuadBezierCurve::new(begin, control, end);
-    curve.stroke(&mut canvas, 5f32);
+    curve.stroke(&mut canvas, 10f32);
+
+    canvas.set_draw_color(foreground3);
+
+    let stroked_circle = grafizo::path::Circle::new(grafizo::vector::Point2::new(200f32, 300f32), 10f32);
+    stroked_circle.stroke(&mut canvas, 5f32);
+
+    canvas.set_draw_color(foreground4);
+
+    let filled_circle = grafizo::path::Circle::new(grafizo::vector::Point2::new(400f32, 300f32), 10f32);
+    filled_circle.fill(&mut canvas);
 
     let mut buf = [0xFFu8; 800 * 600 * 4];
 
